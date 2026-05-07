@@ -1,10 +1,4 @@
-"""Flask app skeleton with PostgreSQL bootstrap.
-
-Issue #3: defines the module-level Flask `app`, a psycopg2 connection
-helper that reads DATABASE_URL from the environment, and an `init_db()`
-function that creates the `messages` table if it does not exist.
-Routes are added in issue #4.
-"""
+"""Flask messages app with PostgreSQL backend."""
 from __future__ import annotations
 
 import os
@@ -12,7 +6,8 @@ from typing import Optional
 
 import psycopg2
 from psycopg2.extensions import connection as PgConnection
-from flask import Flask
+from psycopg2.extras import RealDictCursor
+from flask import Flask, redirect, render_template, request, url_for
 
 
 app = Flask(__name__)
@@ -54,9 +49,44 @@ def init_db() -> None:
         conn.close()
 
 
+@app.route("/")
+def index():
+    """Render the message list ordered by newest first."""
+    conn = get_conn()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT id, name, text, created_at FROM messages "
+                "ORDER BY created_at DESC"
+            )
+            messages = cur.fetchall()
+    finally:
+        conn.close()
+    return render_template("index.html", messages=messages)
+
+
+@app.route("/messages", methods=["POST"])
+def post_message():
+    """Insert a new message via parameterized SQL and redirect to /."""
+    name = (request.form.get("name") or "").strip()
+    text = (request.form.get("text") or "").strip()
+    if not name or not text:
+        return redirect(url_for("index"))
+    conn = get_conn()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO messages (name, text) VALUES (%s, %s)",
+                    (name, text),
+                )
+    finally:
+        conn.close()
+    return redirect(url_for("index"))
+
+
 # Run the bootstrap once at import time so it executes under both
-# `flask run` and gunicorn worker startup. Failures are surfaced
-# immediately so the process does not start in a broken state.
+# `flask run` and gunicorn worker startup.
 try:
     init_db()
 except psycopg2.OperationalError as exc:

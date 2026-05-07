@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Messages</title>
+</head>
+<body>
+    <h1>Messages</h1>
+    <form method="post" action="{{ url_for('post_message') }}">
+        <p><label>Name: <input type="text" name="name" required maxlength="200"></label></p>
+        <p><label>Text: <textarea name="text" required maxlength="2000"></textarea></label></p>
+        <p><button type="submit">Post</button></p>
+    </form>
+    <ul>
+    {% for m in messages %}
+        <li>
+            <strong>{{ m.name }}</strong>
+            <em>({{ m.created_at.strftime('%Y-%m-%d %H:%M:%S') }})</em>:
+            {{ m.text }}
+        </li>
+    {% else %}
+        <li><em>No messages yet.</em></li>
+    {% endfor %}
+    </ul>
+</body>
+</html>
