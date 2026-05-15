@@ -12,6 +12,7 @@ from flask import Flask, redirect, render_template, request, url_for
 
 app = Flask(__name__)
 db_initialized = False
+db_available = True
 
 
 def get_conn() -> Connection:
@@ -52,16 +53,25 @@ def init_db() -> None:
 
 def ensure_db() -> None:
     """Initialize the database once per process, lazily on demand."""
-    global db_initialized
+    global db_initialized, db_available
+    if not db_available:
+        raise RuntimeError("database unavailable")
     if db_initialized:
         return
-    init_db()
-    db_initialized = True
+    try:
+        init_db()
+        db_initialized = True
+    except psycopg.OperationalError:
+        db_available = False
+        raise
 
 
 @app.route("/")
 def index():
     """Render the message list ordered by newest first."""
+    global db_available
+    if not db_available:
+        return render_template("index.html", messages=[])
     try:
         ensure_db()
         conn = get_conn()
@@ -75,17 +85,21 @@ def index():
         finally:
             conn.close()
         return render_template("index.html", messages=messages)
-    except psycopg.OperationalError as exc:
-        app.logger.warning("Database read skipped: %s", exc)
+    except psycopg.OperationalError:
+        db_available = False
+        app.logger.warning("Database access disabled for this worker.")
         return render_template("index.html", messages=[])
 
 
 @app.route("/messages", methods=["POST"])
 def post_message():
     """Insert a new message via parameterized SQL and redirect to /."""
+    global db_available
     name = (request.form.get("name") or "").strip()
     text = (request.form.get("text") or "").strip()
     if not name or not text:
+        return redirect(url_for("index"))
+    if not db_available:
         return redirect(url_for("index"))
     try:
         ensure_db()
@@ -99,8 +113,9 @@ def post_message():
                     )
         finally:
             conn.close()
-    except psycopg.OperationalError as exc:
-        app.logger.warning("Database write skipped: %s", exc)
+    except psycopg.OperationalError:
+        db_available = False
+        app.logger.warning("Database writes disabled for this worker.")
     return redirect(url_for("index"))
 
 if __name__ == "__main__":
