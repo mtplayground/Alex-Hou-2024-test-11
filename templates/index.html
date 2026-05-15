@@ -3,24 +3,42 @@
 <head>
     <meta charset="utf-8">
     <title>Messages</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
-    <h1>Messages</h1>
-    <form method="post" action="{{ url_for('post_message') }}">
-        <p><label>Name: <input type="text" name="name" required maxlength="200"></label></p>
-        <p><label>Text: <textarea name="text" required maxlength="2000"></textarea></label></p>
-        <p><button type="submit">Post</button></p>
-    </form>
-    <ul>
-    {% for m in messages %}
-        <li>
-            <strong>{{ m.name }}</strong>
-            <em>({{ m.created_at.strftime('%Y-%m-%d %H:%M:%S') }})</em>:
-            {{ m.text }}
-        </li>
-    {% else %}
-        <li><em>No messages yet.</em></li>
-    {% endfor %}
-    </ul>
+    <main class="page">
+        <section class="panel">
+            <p class="eyebrow">Shared guestbook</p>
+            <h1>Messages</h1>
+            <p class="intro">Leave a short note for the next visitor. New entries appear at the top when storage is available.</p>
+            <form class="message-form" method="post" action="{{ url_for('post_message') }}">
+                <label>
+                    <span>Name</span>
+                    <input type="text" name="name" required maxlength="200">
+                </label>
+                <label>
+                    <span>Message</span>
+                    <textarea name="text" required maxlength="2000"></textarea>
+                </label>
+                <button type="submit">Post message</button>
+            </form>
+        </section>
+        <section class="panel">
+            <h2>Recent notes</h2>
+            <ul class="message-list">
+            {% for m in messages %}
+                <li>
+                    <div class="message-meta">
+                        <strong>{{ m.name }}</strong>
+                        <em>{{ m.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</em>
+                    </div>
+                    <p>{{ m.text }}</p>
+                </li>
+            {% else %}
+                <li class="empty-state">No messages yet. Be the first to write one.</li>
+            {% endfor %}
+            </ul>
+        </section>
+    </main>
 </body>
 </html>

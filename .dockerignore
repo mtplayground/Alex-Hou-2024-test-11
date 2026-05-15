@@ -1,0 +1,10 @@
+.git
+.gitignore
+.gh_token
+.env.production
+.env
+.database_url
+.db_decision
+.claude
+__pycache__/
+*.pyc

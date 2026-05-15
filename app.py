@@ -4,17 +4,18 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-import psycopg2
-from psycopg2.extensions import connection as PgConnection
-from psycopg2.extras import RealDictCursor
+import psycopg
+from psycopg import Connection
+from psycopg.rows import dict_row
 from flask import Flask, redirect, render_template, request, url_for
 
 
 app = Flask(__name__)
+db_initialized = False
 
 
-def get_conn() -> PgConnection:
-    """Open a new psycopg2 connection using DATABASE_URL.
+def get_conn() -> Connection:
+    """Open a new psycopg connection using DATABASE_URL.
 
     Raises RuntimeError if DATABASE_URL is not set so misconfiguration
     fails loudly at first use rather than silently connecting to nowhere.
@@ -22,7 +23,7 @@ def get_conn() -> PgConnection:
     dsn: Optional[str] = os.environ.get("DATABASE_URL")
     if not dsn:
         raise RuntimeError("DATABASE_URL environment variable is not set")
-    return psycopg2.connect(dsn)
+    return psycopg.connect(dsn)
 
 
 def init_db() -> None:
@@ -49,20 +50,34 @@ def init_db() -> None:
         conn.close()
 
 
+def ensure_db() -> None:
+    """Initialize the database once per process, lazily on demand."""
+    global db_initialized
+    if db_initialized:
+        return
+    init_db()
+    db_initialized = True
+
+
 @app.route("/")
 def index():
     """Render the message list ordered by newest first."""
-    conn = get_conn()
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                "SELECT id, name, text, created_at FROM messages "
-                "ORDER BY created_at DESC"
-            )
-            messages = cur.fetchall()
-    finally:
-        conn.close()
-    return render_template("index.html", messages=messages)
+        ensure_db()
+        conn = get_conn()
+        try:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    "SELECT id, name, text, created_at FROM messages "
+                    "ORDER BY created_at DESC"
+                )
+                messages = cur.fetchall()
+        finally:
+            conn.close()
+        return render_template("index.html", messages=messages)
+    except psycopg.OperationalError as exc:
+        app.logger.warning("Database read skipped: %s", exc)
+        return render_template("index.html", messages=[])
 
 
 @app.route("/messages", methods=["POST"])
@@ -72,27 +87,21 @@ def post_message():
     text = (request.form.get("text") or "").strip()
     if not name or not text:
         return redirect(url_for("index"))
-    conn = get_conn()
     try:
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO messages (name, text) VALUES (%s, %s)",
-                    (name, text),
-                )
-    finally:
-        conn.close()
+        ensure_db()
+        conn = get_conn()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO messages (name, text) VALUES (%s, %s)",
+                        (name, text),
+                    )
+        finally:
+            conn.close()
+    except psycopg.OperationalError as exc:
+        app.logger.warning("Database write skipped: %s", exc)
     return redirect(url_for("index"))
-
-
-# Run the bootstrap once at import time so it executes under both
-# `flask run` and gunicorn worker startup.
-try:
-    init_db()
-except psycopg2.OperationalError as exc:
-    app.logger.error("Database bootstrap failed: %s", exc)
-    raise
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))
