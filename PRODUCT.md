@@ -2,52 +2,60 @@
 
 ## What this is
 
-A minimal Flask "guestbook"-style web service backed by PostgreSQL, packaged for deployment on Fly.io. End-to-end functional: visitors can view all posted messages and submit new ones via a single HTML page.
+A small Flask guestbook app with a server-rendered HTML UI. Visitors can submit
+short messages and, when PostgreSQL is reachable, see messages listed
+newest-first on the homepage.
 
 ## Current capabilities
 
-- `GET /` renders `templates/index.html` with all messages ordered newest-first (`created_at DESC`).
-- `POST /messages` accepts a form-encoded `name` + `text`, inserts a row via parameterized SQL, then 302-redirects to `/` (Post/Redirect/Get).
-- Empty/whitespace-only `name` or `text` submissions are silently dropped (redirect without insert) — no error surface.
-- Database bootstrap on import: opens a psycopg2 connection from `DATABASE_URL` and creates the `messages` table if missing. Idempotent — safe to run on every worker start.
-- `messages` schema: `id SERIAL PK`, `name TEXT NOT NULL`, `text TEXT NOT NULL`, `created_at TIMESTAMPTZ DEFAULT NOW()`.
-- Container image (`python:3.11-slim`) running gunicorn on port 8080.
-- Direct `python app.py` entrypoint for local dev (binds `0.0.0.0:$PORT`, default 8080).
+- `GET /` renders a styled single-page guestbook from `templates/index.html`.
+- `POST /messages` accepts `name` and `text`, inserts a message, then redirects
+  back to `/`.
+- Empty or whitespace-only submissions are ignored.
+- The `messages` table is created lazily on first successful database access.
+- If PostgreSQL is unavailable, the app keeps serving the form and empty state,
+  disables further DB attempts in that worker, and avoids fatal startup errors.
+- Static styling is served from `static/styles.css`.
 
-## Architecture & key decisions
+## Architecture and decisions
 
-- **Single-file app** (`app.py`) — no blueprints or package layout yet; expand only when routes/modules require it.
-- **Bootstrap at import time, not lazily.** `init_db()` runs on module load so misconfiguration (missing `DATABASE_URL`, unreachable DB) fails the process immediately rather than on first request. `psycopg2.OperationalError` is logged and re-raised.
-- **`DATABASE_URL` is required.** `get_conn()` raises `RuntimeError` if unset — no silent fallback.
-- **psycopg2 (sync), not asyncpg or SQLAlchemy.** Raw SQL via cursor; transactions managed by `with conn:` context manager. Read path uses `RealDictCursor` so templates can address columns by name.
-- **Parameterized SQL only.** Inserts pass values as cursor params (`%s`), never via string formatting.
-- **Server-side rendering with Jinja2 autoescape.** No JS, no client framework; `m.name`/`m.text` are rendered through Jinja's default autoescape so user-submitted content is HTML-safe.
-- **Post/Redirect/Get pattern** for `POST /messages` to prevent duplicate submits on refresh.
-- **gunicorn in container, `flask run`/`python app.py` for local.** Both paths re-trigger the same import-time bootstrap.
+- **Single-file backend**: routes, database bootstrap, and degraded-mode
+  handling live in `app.py`.
+- **Server-rendered frontend**: Jinja templates plus one CSS file; no JavaScript
+  bundle or client framework.
+- **PostgreSQL via psycopg 3**: synchronous raw SQL, parameterized writes, and
+  `dict_row` reads for template-friendly records.
+- **Lazy DB initialization**: startup does not depend on DB availability;
+  schema bootstrap runs on demand.
+- **Bounded DB connection attempts**: connections use a short timeout so a bad
+  database endpoint does not hang gunicorn workers.
+- **Production process**: gunicorn binds to `0.0.0.0:${PORT:-8080}`.
 
 ## Layout
 
-```
-app.py             Flask app, routes, DB bootstrap
-templates/
-  index.html       Message list + post form (single page)
-requirements.txt   Flask 3.0.3, psycopg2-binary 2.9.9, gunicorn 22.0.0
-Dockerfile         python:3.11-slim, gunicorn on :8080
-.env.example       DATABASE_URL template
+```text
+app.py               Flask app, routes, DB bootstrap, degraded-mode handling
+templates/index.html Guestbook page and form
+static/styles.css    Guestbook styling
+requirements.txt     Flask, psycopg[binary], gunicorn
+Dockerfile           Python container runtime
+fly.toml             Fly config retained in the repo
 ```
 
 ## Conventions
 
-- Configuration via environment variables only (`DATABASE_URL`, `PORT`).
-- Schema changes are expressed as `CREATE TABLE IF NOT EXISTS` in `init_db()` — no migration tool yet.
-- Fail loudly on startup misconfiguration; do not degrade silently.
-- All DB access goes through `get_conn()` with `try/finally` close — no connection pooling yet.
-- Form input length capped client-side (`maxlength` on `name`/`text`); no server-side length enforcement beyond the `TEXT` column.
+- Configuration is environment-variable driven: `DATABASE_URL` controls
+  persistence and `PORT` controls the bind port.
+- DB reads and writes go through `get_conn()` and close connections explicitly.
+- Schema setup is limited to `CREATE TABLE IF NOT EXISTS`; there is no migration
+  framework yet.
+- User-submitted values render through Jinja autoescaping.
+- Form length limits are client-side `maxlength` attributes.
 
-## Not yet implemented
+## Not implemented
 
 - Tests.
-- Migrations / schema versioning.
-- Observability (structured logging, metrics).
-- Pagination, message deletion/editing, auth.
-- Server-side input length/rate limits.
+- Authentication or user accounts.
+- Pagination, editing, deletion, or moderation.
+- Server-side rate limits or length validation.
+- Connection pooling, retries, metrics, or structured logging.
