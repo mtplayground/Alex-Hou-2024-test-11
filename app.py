@@ -24,7 +24,7 @@ def get_conn() -> Connection:
     dsn: Optional[str] = os.environ.get("DATABASE_URL")
     if not dsn:
         raise RuntimeError("DATABASE_URL environment variable is not set")
-    return psycopg.connect(dsn)
+    return psycopg.connect(dsn, connect_timeout=3)
 
 
 def init_db() -> None:
